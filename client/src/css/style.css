@@ -1,0 +1,29 @@
+body {
+    background-color: gray;
+}
+
+.center {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%)
+}
+
+.canvas-holder {
+    background-color: white;
+    width: 1200px;
+    height: 1000px;
+    position: relative;
+}
+
+#canvas-back {
+    position: absolute;
+    border: 1px solid black;
+    touch-action: none;
+}
+
+#canvas-draw {
+    position: absolute;
+    border: 1px solid green;
+    touch-action: none;
+}
