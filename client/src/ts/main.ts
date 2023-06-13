@@ -1,6 +1,6 @@
 import { DrawData, DrawPhase, DrawingPlayer } from "./drawing";
-import { DrawCommandBase, DrawPolylineCommand } from "./commands";
-import { DrawToolBase, PolylineDrawTool, LineDrawTool } from "./drawtools";
+import { DrawCommandBase, DrawCommand } from "./commands";
+import { DrawToolBase, PolylineDrawTool, LineDrawTool, ToolType, CircleDrawTool, FloodFillDrawTool } from "./drawtools";
 import { HubConnection, HubConnectionBuilder } from "@microsoft/signalr";
 import "../css/style.css";
 
@@ -12,17 +12,19 @@ class DrawingApp {
     private drawCanvas: HTMLCanvasElement;
     private backCtx: CanvasRenderingContext2D;
     private drawCtx: CanvasRenderingContext2D;
-    private isPainting: boolean;
+    private tools: Map<ToolType, DrawToolBase>;
     private commands: DrawCommandBase[];
 
     private connection: HubConnection;
     private players: Map<string, DrawingPlayer>;
     private localPlayer: DrawingPlayer;
+    private localTool: number;
 
     constructor() {
-        this.isPainting = false;
         this.commands = [];
         this.players = new Map();
+        this.tools = new Map();
+        this.localTool = 0; // TODO: Make that all players holds only tool type, not tools itself
         this.backCanvas = document.getElementById("canvas-back") as HTMLCanvasElement;
         this.drawCanvas = document.getElementById("canvas-draw") as HTMLCanvasElement;
         this.backCtx = this.backCanvas.getContext("2d");
@@ -30,6 +32,7 @@ class DrawingApp {
         this.connection = new HubConnectionBuilder().withUrl(`http://${DRAW_HUB_URL}/draw`).build();
         this.setupContext(this.backCtx);
         this.setupContext(this.drawCtx);
+        this.prepareTools();
         this.createUserEvents();
         this.createHubEvents();
     }
@@ -47,16 +50,10 @@ class DrawingApp {
         for (let player of this.players.values()) {
             if (player.phase == DrawPhase.End)
                 continue;
-            const path = player.tool.path;
+            const path = player.lastState.path;
             if (path != null) {
                 this.drawCtx.stroke(path);
             }
-        }
-    }
-
-    private applyDraw(path: Path2D) {
-        if (path != null) {
-            this.backCtx.stroke(path);
         }
     }
 
@@ -70,6 +67,13 @@ class DrawingApp {
             command.draw(this.backCtx);
     }
 
+    private prepareTools() {
+        this.tools.set(ToolType.Polyline, new PolylineDrawTool());
+        this.tools.set(ToolType.Line, new LineDrawTool());
+        this.tools.set(ToolType.Circle, new CircleDrawTool());
+        this.tools.set(ToolType.FloodFill, new FloodFillDrawTool());
+    }
+
     private createUserEvents() {
         this.drawCanvas.addEventListener("pointerdown", e => this.onPointerDown(e));
         this.drawCanvas.addEventListener("pointerup", e => this.onPointerUp(e));
@@ -81,21 +85,20 @@ class DrawingApp {
     }
 
     private createHubEvents() {
-        this.connection.on("playerConnected", (id) => this.onPlayerConnected(id));
-        this.connection.on("playerDisconnected", (id, msg) => this.onPlayerDisconnected(id, msg));
-        this.connection.on("drawReceive", (id, data) => this.onDrawReceive(id, data));
-        
         this.connection.start()
             .then(() => {
                 const id = this.connection.connectionId;
-                this.localPlayer = new DrawingPlayer(id);
+                this.localPlayer = new DrawingPlayer(id, this.tools.get(ToolType.Polyline));
                 this.players.set(id, this.localPlayer);
+                this.connection.on("playerConnected", (id) => this.onPlayerConnected(id));
+                this.connection.on("playerDisconnected", (id, msg) => this.onPlayerDisconnected(id, msg));
+                this.connection.on("drawReceive", (id, data) => this.onDrawReceive(id, data));
             })
             .catch((err) => {
                 console.error(err);
                 console.log("Due to connection error starting offline session");
                 const id = "offline";
-                this.localPlayer = new DrawingPlayer(id);
+                this.localPlayer = new DrawingPlayer(id, this.tools.get(ToolType.Polyline));
                 this.players.set(id, this.localPlayer);
             });
     }
@@ -103,48 +106,43 @@ class DrawingApp {
     private onPointerDown(e: PointerEvent) {
         e.preventDefault();
         e.stopPropagation();
-        this.isPainting = true;
+        this.localPlayer.phase = DrawPhase.Start;
         this.clearCanvas(this.drawCtx);
-        let path = this.localPlayer.tool.drawStart(e.offsetX, e.offsetY);
-        if (path != null) {
-            this.drawCtx.stroke(path);
-            this.connection.send("drawSend", this.createData(e, this.drawCtx, DrawPhase.Start));
-        }
+        this.connection.send("drawSend", this.createData(e, this.drawCtx, DrawPhase.Start));
+        this.localPlayer.drawStart(this.drawCtx, Math.floor(e.offsetX), Math.floor(e.offsetY));
         console.log("pointer down");
     }
 
     private onPointerUp(e: PointerEvent) {
         e.preventDefault();
         e.stopPropagation();
-        if (!this.isPainting)
+        if (this.localPlayer.phase == DrawPhase.End)
             return;
-        this.isPainting = false;
+        this.localPlayer.phase = DrawPhase.End;
         this.clearCanvas(this.drawCtx);
-        let path = this.localPlayer.tool.drawFinish(e.offsetX, e.offsetY);
-        if (path != null) {
-            this.backCtx.stroke(path);
-            this.commands.push(new DrawPolylineCommand(path, this.backCtx.strokeStyle, this.backCtx.lineWidth))
-            this.connection.send("drawSend", this.createData(e, this.drawCtx, DrawPhase.End));
-        }
+        this.connection.send("drawSend", this.createData(e, this.drawCtx, DrawPhase.End));
+        this.localPlayer.drawFinish(this.backCtx, Math.floor(e.offsetX), Math.floor(e.offsetY));
         console.log("pointer up");
     }
 
     private onPointerMove(e: PointerEvent) {
-        if (!this.isPainting)
+        e.preventDefault();
+        e.stopPropagation();
+        if (this.localPlayer.phase == DrawPhase.End)
             return;
+        this.localPlayer.phase = DrawPhase.Drawing;
         this.clearCanvas(this.drawCtx);
-        let path = this.localPlayer.tool.drawing(e.offsetX, e.offsetY);
-        if (path != null) {
-            this.drawCtx.stroke(path);
-            this.connection.send("drawSend", this.createData(e, this.drawCtx, DrawPhase.Drawing));
-        }
+        this.connection.send("drawSend", this.createData(e, this.drawCtx, DrawPhase.Drawing));
+        this.localPlayer.drawing(this.drawCtx, Math.floor(e.offsetX), Math.floor(e.offsetY));
     }
 
     private onPointerOut(e: PointerEvent) {
-        if (!this.isPainting)
+        e.preventDefault();
+        e.stopPropagation();
+        if (this.localPlayer.phase == DrawPhase.End)
             return;
         this.clearCanvas(this.drawCtx);
-        this.isPainting = false;
+        this.localPlayer.phase = DrawPhase.End;
         console.log("pointer out");
     }
 
@@ -153,11 +151,15 @@ class DrawingApp {
             this.commands.splice(this.commands.length - 1, 1);
             this.redraw();
         }
+        if (e.code == "Space") {
+            this.localTool = (this.localTool + 1) % this.tools.size;
+            this.localPlayer.tool = this.tools.get(this.localTool);
+        }
         console.log("key down  Key: %s  Code: %s  Ctrl: %s  Shift: %s", e.key, e.code, e.ctrlKey, e.shiftKey);
     }
 
     private onPlayerConnected(id: string) {
-        const player = new DrawingPlayer(id);
+        const player = new DrawingPlayer(id, this.tools.get(ToolType.Polyline));
         this.players.set(id, player);
         console.log("playerConnected  Id: %s", id);
     }
@@ -170,7 +172,7 @@ class DrawingApp {
     private onDrawReceive(id: string, data: DrawData) {
         let player: DrawingPlayer;
         if (!this.players.has(id)) {
-            player = new DrawingPlayer(id);
+            player = new DrawingPlayer(id, this.tools.get(ToolType.Polyline));
             this.players.set(id, player);
         }
         else {
@@ -178,26 +180,26 @@ class DrawingApp {
         }
         switch (data.phase) {
             case DrawPhase.Start:
-                player.tool.drawStart(data.x, data.y);
+                player.drawStart(this.drawCtx, data.x, data.y);
                 player.phase = DrawPhase.Start;
                 this.draw();
                 break;
             case DrawPhase.Drawing:
-                player.tool.drawing(data.x, data.y);
+                player.drawing(this.drawCtx, data.x, data.y);
                 player.phase = DrawPhase.Drawing;
                 this.draw();
                 break;
             case DrawPhase.End:
-                const path = player.tool.drawFinish(data.x, data.y);
+                player.drawFinish(this.backCtx, data.x, data.y);
                 player.phase = DrawPhase.End;
                 this.draw();
-                this.applyDraw(path);
                 break;
             default:
                 throw new Error("onDrawReceive received unknown DrawPhase");
         }
     }
 
+    // TODO: Probably better convert string hex color to uint32 and pass it
     private createData(e: PointerEvent, ctx: CanvasRenderingContext2D, phase: DrawPhase): DrawData {
         return { x: e.offsetX, y: e.offsetY, color: <string>ctx.strokeStyle, width: ctx.lineWidth, phase: phase };
     }
