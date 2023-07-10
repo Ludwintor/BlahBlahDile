@@ -1,155 +1,166 @@
-export const enum ToolType {
+import { Canvas, DrawPhase } from "./drawing";
+import { hexToColor32, ImageData32 } from "./utils";
+
+export enum ToolType {
     Polyline,
     Line,
     Circle,
-    FloodFill
+    FloodFill,
+    Eraser
 }
 
 export abstract class DrawToolBase {
-    protected _isPathApplicable: boolean = true;
+    /**
+     * Simulate draw with tool on drawing start event
+     * 
+     * @param canvas canvas to draw on
+     * @param point current drawing point
+     * @param state saved state of current drawing sequence
+     */
+    public abstract drawStart(canvas: Canvas, point: Point, state: DrawState): void
+    /**
+     * Simulate draw with tool on continuous drawing event
+     * 
+     * @param canvas canvas to draw on
+     * @param point current drawing point
+     * @param state saved state of current drawing sequence
+     */
+    public abstract drawing(canvas: Canvas, point: Point, state: DrawState): void
+    /**
+     * Simulate draw with tool on drawing finish event
+     * 
+     * @param canvas canvas to draw on
+     * @param point current drawing point
+     * @param state saved state of current drawing sequence
+     */
+    public abstract drawFinish(canvas: Canvas, point: Point, state: DrawState): void;
+    /**
+     * Actually draws with tool based on provided state
+     * 
+     * @param canvas canvas to draw on
+     * @param state state that contains data to draw with
+     */
+    public abstract draw(canvas: Canvas, state: DrawState, phase: DrawPhase): void;
 
-    /**
-     * Draws with tool on drawing start
-     * 
-     * @param ctx canvas context to draw on
-     * @param point current drawing point
-     * @param state saved state of current drawing sequence
-     */
-    public abstract drawStart(ctx: CanvasRenderingContext2D, point: Point, state: DrawState): void;
-    /**
-     * Draws with tool on continuous drawing
-     * 
-     * @param ctx canvas context to draw on
-     * @param point current drawing point
-     * @param state saved state of current drawing sequence
-     */
-    public abstract drawing(ctx: CanvasRenderingContext2D, point: Point, state: DrawState): void;
-    /**
-     * Draws with tool on drawing finish
-     * 
-     * @param ctx canvas context to draw on
-     * @param point current drawing point
-     * @param state saved state of current drawing sequence
-     */
-    public abstract drawFinish(ctx: CanvasRenderingContext2D, point: Point, state: DrawState): void;
-    public pointsToPath(points: Point[]): Path2D { return null };
+    protected getCtx(canvas: Canvas, phase: DrawPhase): CanvasRenderingContext2D {
+        return phase == DrawPhase.End ? canvas.ctx : canvas.tempCtx;
+    }
 }
 
 export class PolylineDrawTool extends DrawToolBase {
-    public drawStart(ctx: CanvasRenderingContext2D, point: Point, state: DrawState): void {
+    public drawStart(canvas: Canvas, point: Point, state: DrawState): void {
         state.path = new Path2D();
         state.points = [];
-        this.drawing(ctx, point, state);
-    }
-
-    public drawing(ctx: CanvasRenderingContext2D, point: Point, state: DrawState): void {
-        state.path.lineTo(point.x, point.y);
         state.points.push(point);
-        ctx.stroke(state.path);
     }
 
-    public drawFinish(ctx: CanvasRenderingContext2D, point: Point, state: DrawState): void {
-        this.drawing(ctx, point, state);
+    public drawing(canvas: Canvas, point: Point, state: DrawState): void {
+        state.points.push(point);
     }
 
-    public pointsToPath(points: Point[]): Path2D {
-        const path = new Path2D();
-        for (const point of points) {
-            path.lineTo(point.x, point.y);
+    public drawFinish(canvas: Canvas, point: Point, state: DrawState): void {
+        state.points.push(point);
+    }
+
+    public draw(canvas: Canvas, state: DrawState, phase: DrawPhase): void {
+        if (state.path == null) {
+            state.path = new Path2D();
+            for (const point of state.points)
+                state.path.lineTo(point.x, point.y);
+        } else {
+            const lastPoint = state.points[state.points.length - 1];
+            state.path.lineTo(lastPoint.x, lastPoint.y);
         }
-        return path;
+        this.getCtx(canvas, phase).stroke(state.path);
     }
 }
 
 export class LineDrawTool extends DrawToolBase {
-    public drawStart(ctx: CanvasRenderingContext2D, point: Point, state: DrawState): void {
+    public drawStart(canvas: Canvas, point: Point, state: DrawState): void {
         state.path = null;
         state.points = [];
         state.points.push(point);
         state.points.push(point);
     }
 
-    public drawing(ctx: CanvasRenderingContext2D, point: Point, state: DrawState): void {
-        state.path = new Path2D();
-        const start = state.points[0];
-        state.path.moveTo(start.x, start.y);
-        state.path.lineTo(point.x, point.y);
+    public drawing(canvas: Canvas, point: Point, state: DrawState): void {
+        state.path = null;
         state.points[1] = point;
-        ctx.stroke(state.path);
     }
 
-    public drawFinish(ctx: CanvasRenderingContext2D, point: Point, state: DrawState): void {
-        this.drawing(ctx, point, state);
+    public drawFinish(canvas: Canvas, point: Point, state: DrawState): void {
+        state.points[1] = point;
     }
 
-    public pointsToPath(points: Point[]): Path2D {
-        console.assert(points.length == 2, "[LineDrawTool.pointsToPath()] there are %d points but expected 2", points.length);
-        const path = new Path2D();
-        const start = points[0];
-        const end = points[1];
-        path.moveTo(start.x, start.y);
-        path.lineTo(end.x, end.y);
-        return path;
+    public draw(canvas: Canvas, state: DrawState, phase: DrawPhase): void {
+        console.assert(state.points.length == 2, "[LineDrawTool.draw()] there are %d points but expected 2", state.points.length);
+        if (state.path == null) {
+            state.path = new Path2D();
+            const start = state.points[0];
+            const end = state.points[1];
+            state.path.moveTo(start.x, start.y);
+            state.path.lineTo(end.x, end.y);
+        }
+        this.getCtx(canvas, phase).stroke(state.path);
     }
 }
 
 export class CircleDrawTool extends DrawToolBase {
-    public drawStart(ctx: CanvasRenderingContext2D, point: Point, state: DrawState): void {
+    public drawStart(canvas: Canvas, point: Point, state: DrawState): void {
         state.path = null;
         state.points = [];
         state.points.push(point);
         state.points.push(point);
     }
 
-    public drawing(ctx: CanvasRenderingContext2D, point: Point, state: DrawState): void {
-        state.path = new Path2D();
-        const start = state.points[0];
-        state.path.arc(start.x, start.y, Point.distance(start, point), 0, 2 * Math.PI);
+    public drawing(canvas: Canvas, point: Point, state: DrawState): void {
+        state.path = null;
         state.points[1] = point;
-        ctx.stroke(state.path);
     }
 
-    public drawFinish(ctx: CanvasRenderingContext2D, point: Point, state: DrawState): void {
-        this.drawing(ctx, point, state);
+    public drawFinish(canvas: Canvas, point: Point, state: DrawState): void {
+        state.points[1] = point;
     }
 
-    public pointsToPath(points: Point[]): Path2D {
-        console.assert(points.length == 2, "[CircleDrawTool.pointsToPath()] there are %d points but expected 2", points.length);
-        const path = new Path2D();
-        const start = points[0];
-        const end = points[1];
-        path.arc(start.x, start.y, Point.distance(start, end), 0, 2 * Math.PI);
-        return path;
+    public draw(canvas: Canvas, state: DrawState, phase: DrawPhase): void {
+        console.assert(state.points.length == 2, "[CircleDrawTool.draw()] there are %d points but expected 2", state.points.length);
+        if (state.path == null) {
+            state.path = new Path2D();
+            const start = state.points[0];
+            const end = state.points[1];
+            state.path.arc(start.x, start.y, Point.distance(start, end), 0, 2 * Math.PI);
+        }
+        this.getCtx(canvas, phase).stroke(state.path);
     }
 }
 
+// TODO: Try add support for Path2D caching (if possible)
 export class FloodFillDrawTool extends DrawToolBase {
-    protected _isPathApplicable: boolean = false;
-
-    public drawStart(ctx: CanvasRenderingContext2D, point: Point, state: DrawState): void {
+    public drawStart(canvas: Canvas, point: Point, state: DrawState): void {
         state.path = null;
         state.points = [];
     }
 
-    public drawing(ctx: CanvasRenderingContext2D, point: Point, state: DrawState): void {
+    public drawing(canvas: Canvas, point: Point, state: DrawState): void {
     }
 
-    public drawFinish(ctx: CanvasRenderingContext2D, point: Point, state: DrawState): void {
-        this.floodFill(ctx, point, state);
+    public drawFinish(canvas: Canvas, point: Point, state: DrawState): void {
         state.points.push(point);
     }
 
-    public pointsToPath(points: Point[]): Path2D {
-        return null;
+    public draw(canvas: Canvas, state: DrawState, phase: DrawPhase): void {
+        console.assert(state.points.length == 1, "[FloodFillDrawTool.draw()] there are %d points but expected 1", state.points.length);
+        this.floodFill(canvas, state);
     }
 
-    private floodFill(ctx: CanvasRenderingContext2D, start: Point, state: DrawState) {
-        const width = ctx.canvas.width;
-        const height = ctx.canvas.height;
-        const image = ctx.getImageData(0, 0, width, height);
-        const data = { pixels: new Uint32Array(image.data.buffer), width: width, height: height};
-        const originColor = this.getColor(data, start.x, start.y);
-        const newColor = this.hexToColor(<string>ctx.strokeStyle);
+    private floodFill(canvas: Canvas, state: DrawState) {
+        const start = state.points[0];
+        const width = canvas.width;
+        const height = canvas.height;
+        const image = canvas.ctx.getImageData(0, 0, width, height);
+        const data = new ImageData32(image);
+        const originColor = data.getPixel(start.x, start.y);
+        const newColor = hexToColor32(canvas.strokeColor + Math.floor(canvas.alpha * 255).toString(16));
         if (originColor == newColor)
             return;
         const stack = new Array<Point>();
@@ -159,21 +170,21 @@ export class FloodFillDrawTool extends DrawToolBase {
             const point = stack.pop();
             let lx = point.x - 1;
             while (this.matchPixel(data, originColor, lx, point.y)) {
-                this.setColor(data, lx, point.y, newColor);
+                data.setPixel(lx, point.y, newColor);
                 lx--;
             }
             let rx = point.x;
             while (this.matchPixel(data, originColor, rx, point.y)) {
-                this.setColor(data, rx, point.y, newColor);
+                data.setPixel(rx, point.y, newColor);
                 rx++;
             }
             this.scan(data, originColor, lx, rx - 1, point.y + 1, stack);
             this.scan(data, originColor, lx, rx - 1, point.y - 1, stack);
         }
-        ctx.putImageData(image, 0, 0);
+        canvas.ctx.putImageData(image, 0, 0);
     }
 
-    private scan(data: ImageData, originColor: number, lx: number, rx: number, y: number, stack: Array<Point>) {
+    private scan(data: ImageData32, originColor: number, lx: number, rx: number, y: number, stack: Array<Point>) {
         let added = false;
         for (let x = lx; x <= rx; x++) {
             if (!this.matchPixel(data, originColor, x, y)) {
@@ -185,31 +196,47 @@ export class FloodFillDrawTool extends DrawToolBase {
         }
     }
 
-    private matchPixel(data: ImageData, originColor: number, x: number, y: number): boolean {
-        return this.isInBounds(x, y, data.width, data.height) && originColor == this.getColor(data, x, y);
-    }
-
-    private getColor(data: ImageData, x: number, y: number): number {
-        return data.pixels[y * data.width + x];
-    }
-
-    private setColor(data: ImageData, x: number, y: number, color: number) {
-        data.pixels[y * data.width + x] = color;
+    private matchPixel(data: ImageData32, originColor: number, x: number, y: number): boolean {
+        return this.isInBounds(x, y, data.width, data.height) && originColor == data.getPixel(x, y);
     }
 
     private isInBounds(x: number, y: number, width: number, height: number): boolean {
         return x > 0 && x < width && y > 0 && y < height;
     }
+}
 
-    private hexToColor(hex: string): number {
-        return this.swap32((parseInt(`${hex.substring(1)}33`, 16)));
+export class EraserDrawTool extends DrawToolBase {
+    public drawStart(canvas: Canvas, point: Point, state: DrawState): void {
+        state.path = new Path2D();
+        state.points = [];
+        state.points.push(point);
     }
 
-    private swap32(value: number): number {
-        return ((value & 0xFF) << 24) |
-               ((value & 0xFF00) << 8) |
-               ((value >> 8) & 0xFF00) |
-               ((value >> 24) & 0xFF);
+    public drawing(canvas: Canvas, point: Point, state: DrawState): void {
+        state.points.push(point);
+    }
+
+    public drawFinish(canvas: Canvas, point: Point, state: DrawState): void {
+        state.points.push(point);
+    }
+
+    public draw(canvas: Canvas, state: DrawState, phase: DrawPhase): void {
+        if (state.path == null) {
+            state.path = new Path2D();
+            for (const point of state.points)
+                state.path.lineTo(point.x, point.y);
+        } else {
+            const lastPoint = state.points[state.points.length - 1];
+            state.path.lineTo(lastPoint.x, lastPoint.y);
+        }
+        canvas.strokeColor = "white";
+        if (phase == DrawPhase.End) {
+            canvas.ctx.globalCompositeOperation = "destination-out";
+            canvas.ctx.stroke(state.path);
+            canvas.ctx.globalCompositeOperation = "source-over";
+        } else {
+            canvas.tempCtx.stroke(state.path);
+        }
     }
 }
 
@@ -234,10 +261,17 @@ export class Point {
 export class DrawState {
     public path: Path2D;
     public points: Point[];
-}
+    public color: string;
+    public lineWidth: number;
+    public alpha: number;
 
-interface ImageData {
-    pixels: Uint32Array;
-    width: number;
-    height: number;
+    public clone(): DrawState {
+        const state = new DrawState();
+        state.path = this.path == null ? null : new Path2D(this.path);
+        state.points = this.points.slice();
+        state.color = this.color;
+        state.lineWidth = this.lineWidth;
+        state.alpha = this.alpha;
+        return state;
+    }
 }

@@ -8,12 +8,31 @@ module.exports = {
     module: {
         rules: [
             {
+                test: /\.html$/,
+                loader: "html-loader",
+            },
+            {
                 test: /\.ts$/,
-                use: 'ts-loader',
+                loader: 'ts-loader',
             },
             {
                 test: /\.css$/,
-                use: [MiniCssExtractPlugin.loader, "css-loader"],
+                use: [
+                    { loader: MiniCssExtractPlugin.loader }, 
+                    { 
+                        loader: "css-loader",
+                        options: {
+                            esModule: false,
+                        },
+                    },
+                ],
+            },
+            {
+                test: /\.(jpe?g|png|gif|svg)$/,
+                type: "asset/resource",
+                generator: {
+                    filename: "img/[name][ext]"
+                }
             },
         ],
     },
@@ -33,5 +52,6 @@ module.exports = {
         new MiniCssExtractPlugin({
             filename: "css/[name].[chunkhash].css",
         }),
-    ]
+    ],
+    devtool: "eval-source-map"
 };

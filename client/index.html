@@ -1,12 +1,72 @@
 <!DOCTYPE html>
 <head>
     <title>РИСУЕШ?</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
 </head>
 <body>
-    <div class="center">
-        <div class="canvas-holder">
-            <canvas id="canvas-back" width="1200" height="1000"></canvas>
-            <canvas id="canvas-draw" width="1200" height="1000"></canvas>
+    <div class="game-holder">
+        <div class="color-holder">
+            <div class="content">
+                <div id="colors">
+                    <div class="color" style="background-color: rgb(45, 228, 85);"></div>
+                    <div class="color" style="background-color: rgb(4, 0, 255);"></div>
+                    <div class="color" style="background-color: rgb(255, 0, 0);"></div>
+                    <div class="color" style="background-color: rgb(255, 255, 255);"></div>
+                    <div class="color" style="background-color: rgb(0, 0, 0);"></div>
+                    <div class="color" style="background-color: rgb(4, 255, 242);"></div>
+                </div>
+                <input type="color" id="color-picker">
+            </div>
+        </div>
+        <div class="center">
+            <div class="canvas-holder">
+                <canvas id="canvas-back" width="1200" height="900"></canvas>
+                <canvas id="canvas-draw" width="1200" height="900"></canvas>
+            </div>
+            <div id="tools">
+                <div class="tool" data-tool="Polyline">
+                    <img src="./src/img/iconframe.png" width="80" height="80" draggable="false">
+                    <img class="tool-icon" src="./src/img/brush.png" width="80" height="80" draggable="false">
+                </div>
+                <div class="tool" data-tool="Eraser">
+                    <img src="./src/img/iconframe.png" width="80" height="80" draggable="false">
+                    <img class="tool-icon" src="./src/img/eraser.png" width="80" height="80" draggable="false">
+                </div>
+                <div class="tool" data-tool="Line">
+                    <img src="./src/img/iconframe.png" width="80" height="80" draggable="false">
+                    <img class="tool-icon" src="./src/img/line.png" width="80" height="80" draggable="false">
+                </div>
+                <div class="tool" data-tool="FloodFill">
+                    <img src="./src/img/iconframe.png" width="80" height="80" draggable="false">
+                    <img class="tool-icon" src="./src/img/bucket.png" width="80" height="80" draggable="false">
+                    <div class="tool-icon selected-color-view" id="bucket-color-view" width="80" height="80"></div>
+                </div>
+                <div class="tool" data-tool="Circle">
+                    <img src="./src/img/iconframe.png" width="80" height="80" draggable="false">
+                    <img class="tool-icon" src="./src/img/circle.png" width="80" height="80" draggable="false">
+                </div>
+                <div class="tool" data-tool="FilledCircle">
+                    <img src="./src/img/iconframe.png" width="80" height="80" draggable="false">
+                    <img class="tool-icon" src="./src/img/filledcircle.png" width="80" height="80" draggable="false">
+                </div>
+                <div class="tool" data-tool="Square">
+                    <img src="./src/img/iconframe.png" width="80" height="80" draggable="false">
+                    <img class="tool-icon" src="./src/img/square.png" width="80" height="80" draggable="false">
+                </div>
+                <div class="tool" data-tool="FilledSquare">
+                    <img src="./src/img/iconframe.png" width="80" height="80" draggable="false">
+                    <img class="tool-icon" src="./src/img/filledsquare.png" width="80" height="80" draggable="false">
+                </div>
+            </div>
+        </div>
+        <div class="chat-holder">
+            <div class="content">
+                <ul id="messages"></ul>
+                <form id="chat-form" autocomplete="off">
+                    <input id="chat-input" type="text" autocomplete="off" placeholder="Напишите сообщение...">
+                    <button>О</button>
+                </form>
+            </div>
         </div>
     </div>
 </body>

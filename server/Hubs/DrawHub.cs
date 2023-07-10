@@ -20,6 +20,24 @@ namespace BlahBlahDile.Hubs
             await Clients.Others.SendAsync("drawReceive", Context.ConnectionId, data);
         }
 
+        [HubMethodName("pickToolSend")]
+        public async ValueTask PickTool(ToolType tool)
+        {
+            await Clients.Others.SendAsync("pickToolReceive", Context.ConnectionId, tool);
+        }
+
+        [HubMethodName("undoSend")]
+        public async ValueTask Undo()
+        {
+            await Clients.Others.SendAsync("undoReceive", Context.ConnectionId);
+        }
+
+        [HubMethodName("chatMessageSend")]
+        public async ValueTask ChatMessage(string message)
+        {
+            await Clients.All.SendAsync("chatMessageReceive", Context.ConnectionId, message);
+        }
+
         public class DrawData
         {
             public int X { get; set; }
@@ -34,6 +52,14 @@ namespace BlahBlahDile.Hubs
                 Drawing,
                 End
             }
+        }
+
+        public enum ToolType
+        {
+            Polyline,
+            Line,
+            Circle,
+            Floodfill
         }
     }
 }

@@ -1,70 +1,54 @@
-import { DrawData, DrawPhase, DrawingPlayer } from "./drawing";
-import { DrawCommandBase, DrawCommand } from "./commands";
-import { DrawToolBase, PolylineDrawTool, LineDrawTool, ToolType, CircleDrawTool, FloodFillDrawTool } from "./drawtools";
+import { Canvas, DrawData, DrawPhase, DrawingPlayer } from "./drawing";
+import { DrawToolBase, PolylineDrawTool, LineDrawTool, ToolType, CircleDrawTool, FloodFillDrawTool, EraserDrawTool } from "./drawtools";
 import { HubConnection, HubConnectionBuilder } from "@microsoft/signalr";
 import "../css/style.css";
 
-const DRAW_HUB_URL: string = "26.115.121.253:7777";
+const DRAW_HUB_URL = "http://26.115.121.253:7777/draw";
+const DEFAULT_COLOR = "black";
+const DEFAULT_WIDTH = 5;
 
 class DrawingApp {
-    // TODO: Refactor canvases to single class (and move methods for drawing)
-    private backCanvas: HTMLCanvasElement;
-    private drawCanvas: HTMLCanvasElement;
-    private backCtx: CanvasRenderingContext2D;
-    private drawCtx: CanvasRenderingContext2D;
+    private canvas: Canvas;
+    private messagesHolder: HTMLElement;
+    private chatForm: HTMLFormElement;
+    private chatInput: HTMLInputElement;
+    private colorInput: HTMLInputElement;
+    private previousToolElement: HTMLDivElement;
     private tools: Map<ToolType, DrawToolBase>;
-    private commands: DrawCommandBase[];
 
     private connection: HubConnection;
     private players: Map<string, DrawingPlayer>;
     private localPlayer: DrawingPlayer;
-    private localTool: number;
 
     constructor() {
-        this.commands = [];
         this.players = new Map();
         this.tools = new Map();
-        this.localTool = 0; // TODO: Make that all players holds only tool type, not tools itself
-        this.backCanvas = document.getElementById("canvas-back") as HTMLCanvasElement;
-        this.drawCanvas = document.getElementById("canvas-draw") as HTMLCanvasElement;
-        this.backCtx = this.backCanvas.getContext("2d");
-        this.drawCtx = this.drawCanvas.getContext("2d");
-        this.connection = new HubConnectionBuilder().withUrl(`http://${DRAW_HUB_URL}/draw`).build();
-        this.setupContext(this.backCtx);
-        this.setupContext(this.drawCtx);
+        const backCanvas = document.getElementById("canvas-back") as HTMLCanvasElement;
+        const drawCanvas = document.getElementById("canvas-draw") as HTMLCanvasElement;
+        this.canvas = new Canvas(drawCanvas, backCanvas);
+        this.messagesHolder = document.getElementById("messages");
+        this.chatForm = document.getElementById("chat-form") as HTMLFormElement;
+        this.chatInput = document.getElementById("chat-input") as HTMLInputElement;
+        this.colorInput = document.getElementById("color-picker") as HTMLInputElement;
+        this.connection = new HubConnectionBuilder().withUrl(DRAW_HUB_URL).build();
         this.prepareTools();
-        this.createUserEvents();
+        this.createUserEvents(drawCanvas);
         this.createHubEvents();
     }
 
-    private setupContext(backCtx: CanvasRenderingContext2D) {
-        backCtx.lineCap = "round";
-        backCtx.lineJoin = "round";
-        backCtx.strokeStyle = "red";
-        backCtx.globalAlpha = 0.2;
-        backCtx.lineWidth = 5;
-    }
-
-    private draw() {
-        this.clearCanvas(this.drawCtx);
+    private redrawTemp() {
+        this.canvas.clearTempCanvas();
         for (let player of this.players.values()) {
             if (player.phase == DrawPhase.End)
                 continue;
-            const path = player.lastState.path;
-            if (path != null) {
-                this.drawCtx.stroke(path);
-            }
+            player.draw(this.canvas);
         }
     }
 
-    private clearCanvas(backCtx: CanvasRenderingContext2D) {
-        backCtx.clearRect(0, 0, backCtx.canvas.width, backCtx.canvas.height);
-    }
-
     private redraw() {
-        this.backCtx.clearRect(0, 0, this.backCanvas.width, this.backCanvas.height);
-        for (const command of this.commands)
-            command.draw(this.backCtx);
+        this.canvas.clearCanvas();
+        for (const player of this.players.values())
+            player.redraw(this.canvas);
     }
 
     private prepareTools() {
@@ -72,44 +56,66 @@ class DrawingApp {
         this.tools.set(ToolType.Line, new LineDrawTool());
         this.tools.set(ToolType.Circle, new CircleDrawTool());
         this.tools.set(ToolType.FloodFill, new FloodFillDrawTool());
+        this.tools.set(ToolType.Eraser, new EraserDrawTool());
     }
 
-    private createUserEvents() {
-        this.drawCanvas.addEventListener("pointerdown", e => this.onPointerDown(e));
-        this.drawCanvas.addEventListener("pointerup", e => this.onPointerUp(e));
-        this.drawCanvas.addEventListener("pointermove", e => this.onPointerMove(e));
-        this.drawCanvas.addEventListener("pointerout", e => this.onPointerOut(e));
+    private createUserEvents(drawCanvas: HTMLCanvasElement) {
+        drawCanvas.addEventListener("pointerdown", e => this.onPointerDown(e));
+        drawCanvas.addEventListener("pointerup", e => this.onPointerUp(e));
+        drawCanvas.addEventListener("pointermove", e => this.onPointerMove(e));
+        drawCanvas.addEventListener("pointerout", e => this.onPointerOut(e));
+        drawCanvas.addEventListener("pointercancel", e => this.onPointerUp(e));
+        drawCanvas.addEventListener("contextmenu", e => this.onPointerUp(<PointerEvent>e));
         document.addEventListener("keydown", e => this.onKeyDown(e));
-        this.drawCanvas.addEventListener("lostpointercapture", e => {console.log("lost pointer")});
-        this.drawCanvas.addEventListener("gotpointercapture", e => {console.log("got pointer")});
+        document.addEventListener("pointerup", e => this.onPointerUp(e));
+        drawCanvas.addEventListener("lostpointercapture", e => {console.log("lost pointer")});
+        drawCanvas.addEventListener("gotpointercapture", e => {console.log("got pointer")});
+
+        const colors = document.getElementById("colors").children;
+        for (let i = 0; i < colors.length; i++) {
+            const color = colors[i] as HTMLDivElement;
+            color.addEventListener("pointerup", e => this.onColorSelected(e));
+        }
+        this.colorInput.addEventListener("input", e => this.onColorPicker(e));
+
+        const tools = document.getElementById("tools").children;
+        this.previousToolElement = tools[0] as HTMLDivElement;
+        this.previousToolElement.classList.add("selected-tool");
+        for (let i = 0; i < tools.length; i++) {
+            const tool = tools[i] as HTMLDivElement;
+            tool.addEventListener("pointerup", e => this.onToolSelected(e));
+        }
+
+        this.chatForm.addEventListener("submit", e => this.onMessageSubmit(e));
     }
 
     private createHubEvents() {
         this.connection.start()
             .then(() => {
                 const id = this.connection.connectionId;
-                this.localPlayer = new DrawingPlayer(id, this.tools.get(ToolType.Polyline));
-                this.players.set(id, this.localPlayer);
-                this.connection.on("playerConnected", (id) => this.onPlayerConnected(id));
+                this.localPlayer = this.createPlayer(id);
+                this.connection.on("playerConnected", id => this.onPlayerConnected(id));
                 this.connection.on("playerDisconnected", (id, msg) => this.onPlayerDisconnected(id, msg));
                 this.connection.on("drawReceive", (id, data) => this.onDrawReceive(id, data));
+                this.connection.on("pickToolReceive", (id, toolType) => this.onPickToolReceive(id, toolType));
+                this.connection.on("undoReceive", id => this.onUndoReceive(id));
+                this.connection.on("chatMessageReceive", (id, message) => this.createMessage(id, message));
             })
             .catch((err) => {
                 console.error(err);
                 console.log("Due to connection error starting offline session");
                 const id = "offline";
-                this.localPlayer = new DrawingPlayer(id, this.tools.get(ToolType.Polyline));
-                this.players.set(id, this.localPlayer);
+                this.localPlayer = this.createPlayer(id);
             });
     }
 
     private onPointerDown(e: PointerEvent) {
         e.preventDefault();
         e.stopPropagation();
-        this.localPlayer.phase = DrawPhase.Start;
-        this.clearCanvas(this.drawCtx);
-        this.connection.send("drawSend", this.createData(e, this.drawCtx, DrawPhase.Start));
-        this.localPlayer.drawStart(this.drawCtx, Math.floor(e.offsetX), Math.floor(e.offsetY));
+        this.canvas.clearTempCanvas();
+        this.connection.send("drawSend", this.createData(e, this.canvas, DrawPhase.Start));
+        this.localPlayer.drawStart(this.canvas, Math.floor(e.offsetX), Math.floor(e.offsetY));
+        this.redrawTemp();
         console.log("pointer down");
     }
 
@@ -118,10 +124,10 @@ class DrawingApp {
         e.stopPropagation();
         if (this.localPlayer.phase == DrawPhase.End)
             return;
-        this.localPlayer.phase = DrawPhase.End;
-        this.clearCanvas(this.drawCtx);
-        this.connection.send("drawSend", this.createData(e, this.drawCtx, DrawPhase.End));
-        this.localPlayer.drawFinish(this.backCtx, Math.floor(e.offsetX), Math.floor(e.offsetY));
+        this.canvas.clearTempCanvas();
+        this.connection.send("drawSend", this.createData(e, this.canvas, DrawPhase.End));
+        this.localPlayer.drawFinish(this.canvas, Math.floor(e.offsetX), Math.floor(e.offsetY));
+        this.localPlayer.draw(this.canvas);
         console.log("pointer up");
     }
 
@@ -130,10 +136,10 @@ class DrawingApp {
         e.stopPropagation();
         if (this.localPlayer.phase == DrawPhase.End)
             return;
-        this.localPlayer.phase = DrawPhase.Drawing;
-        this.clearCanvas(this.drawCtx);
-        this.connection.send("drawSend", this.createData(e, this.drawCtx, DrawPhase.Drawing));
-        this.localPlayer.drawing(this.drawCtx, Math.floor(e.offsetX), Math.floor(e.offsetY));
+        this.canvas.clearTempCanvas();
+        this.connection.send("drawSend", this.createData(e, this.canvas, DrawPhase.Drawing));
+        this.localPlayer.drawing(this.canvas, Math.floor(e.offsetX), Math.floor(e.offsetY));
+        this.redrawTemp();
     }
 
     private onPointerOut(e: PointerEvent) {
@@ -141,26 +147,65 @@ class DrawingApp {
         e.stopPropagation();
         if (this.localPlayer.phase == DrawPhase.End)
             return;
-        this.clearCanvas(this.drawCtx);
-        this.localPlayer.phase = DrawPhase.End;
+        this.canvas.clearTempCanvas();
+        this.localPlayer.cancelDrawing();
         console.log("pointer out");
     }
 
     private onKeyDown(e: KeyboardEvent) {
         if (e.code == "KeyZ" && e.ctrlKey) {
-            this.commands.splice(this.commands.length - 1, 1);
+            this.connection.send("undoSend");
+            this.localPlayer.popCommand();
             this.redraw();
-        }
-        if (e.code == "Space") {
-            this.localTool = (this.localTool + 1) % this.tools.size;
-            this.localPlayer.tool = this.tools.get(this.localTool);
         }
         console.log("key down  Key: %s  Code: %s  Ctrl: %s  Shift: %s", e.key, e.code, e.ctrlKey, e.shiftKey);
     }
 
+    private onMessageSubmit(e: SubmitEvent) {
+        e.preventDefault();
+        const message = this.chatInput.value;
+        if (message != "") {
+            this.connection.send("chatMessageSend", message);
+            this.chatInput.value = "";
+        }
+    }
+
+    private createMessage(id: string, message: string) {
+        const item = document.createElement("li");
+        item.textContent = `Player ${id.slice(0, 4)}: ${message}`;
+        this.messagesHolder.appendChild(item);
+        this.messagesHolder.scrollTop = this.messagesHolder.scrollHeight;
+    }
+
+    private onColorSelected(e: PointerEvent) {
+        e.preventDefault();
+        e.stopPropagation();
+        const color = (<HTMLDivElement>e.target).style.backgroundColor;
+        this.localPlayer.lastState.color = color;
+    }
+
+    private onColorPicker(e: Event) {
+        this.localPlayer.lastState.color = this.colorInput.value;
+    }
+
+    private onToolSelected(e: PointerEvent) {
+        e.preventDefault();
+        e.stopPropagation();
+        const toolElement = e.currentTarget as HTMLDivElement;
+        const tool = toolElement.getAttribute("data-tool");
+        const toolType = ToolType[tool];
+        if (toolType == null)
+            return;
+        this.connection.send("pickToolSend", toolType);
+        this.localPlayer.tool = this.tools.get(toolType);
+        this.previousToolElement.classList.remove("selected-tool");
+        toolElement.classList.add("selected-tool");
+        this.previousToolElement = toolElement;
+        console.log("Current drawing tool: %s", toolType);
+    }
+
     private onPlayerConnected(id: string) {
-        const player = new DrawingPlayer(id, this.tools.get(ToolType.Polyline));
-        this.players.set(id, player);
+        this.createPlayer(id);
         console.log("playerConnected  Id: %s", id);
     }
 
@@ -171,37 +216,67 @@ class DrawingApp {
 
     private onDrawReceive(id: string, data: DrawData) {
         let player: DrawingPlayer;
-        if (!this.players.has(id)) {
-            player = new DrawingPlayer(id, this.tools.get(ToolType.Polyline));
-            this.players.set(id, player);
-        }
-        else {
+        if (this.players.has(id)) {
             player = this.players.get(id);
+        } else {
+            player = this.createPlayer(id);
         }
+        player.lastState.color = data.color;
+        player.lastState.lineWidth = data.width;
+        player.lastState.alpha = data.alpha;
         switch (data.phase) {
             case DrawPhase.Start:
-                player.drawStart(this.drawCtx, data.x, data.y);
-                player.phase = DrawPhase.Start;
-                this.draw();
+                player.drawStart(this.canvas, data.x, data.y);
+                this.redrawTemp();
                 break;
             case DrawPhase.Drawing:
-                player.drawing(this.drawCtx, data.x, data.y);
-                player.phase = DrawPhase.Drawing;
-                this.draw();
+                player.drawing(this.canvas, data.x, data.y);
+                this.redrawTemp();
                 break;
             case DrawPhase.End:
-                player.drawFinish(this.backCtx, data.x, data.y);
-                player.phase = DrawPhase.End;
-                this.draw();
+                player.drawFinish(this.canvas, data.x, data.y);
+                this.redrawTemp();
+                player.draw(this.canvas);
                 break;
             default:
                 throw new Error("onDrawReceive received unknown DrawPhase");
         }
     }
 
+    private onPickToolReceive(id: string, toolType: ToolType) {
+        let player: DrawingPlayer;
+        if (this.players.has(id)) {
+            player = this.players.get(id);
+        } else {
+            player = this.createPlayer(id);
+        }
+        player.tool = this.tools.get(toolType);
+        console.log("Player %s picked %s tool", id, ToolType[toolType]);
+    }
+
+    private onUndoReceive(id: string) {
+        let player: DrawingPlayer;
+        if (this.players.has(id)) {
+            player = this.players.get(id);
+        } else {
+            player = this.createPlayer(id);
+        }
+        player.popCommand();
+        this.redraw();
+        console.log("Player %s used undo", id);
+    }
+
     // TODO: Probably better convert string hex color to uint32 and pass it
-    private createData(e: PointerEvent, ctx: CanvasRenderingContext2D, phase: DrawPhase): DrawData {
-        return { x: e.offsetX, y: e.offsetY, color: <string>ctx.strokeStyle, width: ctx.lineWidth, phase: phase };
+    private createData(e: PointerEvent, canvas: Canvas, phase: DrawPhase): DrawData {
+        return { x: e.offsetX, y: e.offsetY, color: canvas.strokeColor, width: canvas.lineWidth, alpha: canvas.alpha, phase: phase };
+    }
+
+    private createPlayer(id: string): DrawingPlayer {
+        const player = new DrawingPlayer(id, this.tools.get(ToolType.Polyline));
+        player.lastState.color = DEFAULT_COLOR;
+        player.lastState.lineWidth = DEFAULT_WIDTH;
+        this.players.set(id, player);
+        return player;
     }
 }
 
